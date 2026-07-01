@@ -1,0 +1,14 @@
+{
+  "name": "com.bovinelabs.timeline.particles",
+  "displayName": "BovineLabs Timeline Particles",
+  "version": "0.1.0",
+  "unity": "6000.6",
+  "unityRelease": "0a3",
+  "description": "A BovineLabs DOTS Timeline track that drives Unity ParticleSystem (Shuriken) effects on companion GameObjects.\n\nThe Play Particle System track binds a ParticleSystem (a baked companion entity). On a clip's start it restarts the system from the beginning (Clear + Play, optionally with all child systems for composite effects), and on the clip's end it stops it. Unlike the GameObjects Activation track, re-entering a clip replays the effect from the start instead of leaving a finished/composite particle system in its completed state.",
+  "dependencies": {
+    "com.unity.test-framework": "1.6.0"
+  },
+  "author": {
+    "name": "vex"
+  }
+}
