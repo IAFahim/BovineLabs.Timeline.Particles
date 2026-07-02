@@ -19,9 +19,47 @@ namespace BovineLabs.Timeline.Particles
     [WorldSystemFilter(WorldSystemFilterFlags.LocalSimulation | WorldSystemFilterFlags.ClientSimulation)]
     public partial class ParticleSystemPlaySystem : SystemBase
     {
+        // Bound PS entities we've already neutralized Play-On-Awake on (once each, after the companion resolves).
+        private readonly System.Collections.Generic.HashSet<Entity> initialized = new();
+
+        // Active-clip refcount per bound PS this frame, so a falling edge doesn't stop an effect another clip needs.
+        private readonly System.Collections.Generic.Dictionary<Entity, int> activeCounts = new();
+
         /// <inheritdoc/>
         protected override void OnUpdate()
         {
+            // Play-On-Awake suppression: a bound ParticleSystem with the default Play On Awake would free-run at
+            // SubScene load outside timeline control. Stop+Clear each newly-seen bound PS once (retry until its
+            // companion resolves), before the rising-edge loop — a clip active this frame still plays below.
+            foreach (var binding in SystemAPI.Query<RefRO<TrackBinding>>().WithAll<ParticleClipData>())
+            {
+                var e = binding.ValueRO.Value;
+                if (e == Entity.Null || this.initialized.Contains(e))
+                {
+                    continue;
+                }
+
+                if (this.TryGetParticleSystem(e, out var ps))
+                {
+                    ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                    this.initialized.Add(e);
+                }
+            }
+
+            // Refcount active clips per bound PS (a shared PS can be driven by multiple clips/tracks).
+            this.activeCounts.Clear();
+            foreach (var binding in SystemAPI.Query<RefRO<TrackBinding>>().WithAll<ParticleClipData, ClipActive>())
+            {
+                var e = binding.ValueRO.Value;
+                if (e == Entity.Null)
+                {
+                    continue;
+                }
+
+                this.activeCounts.TryGetValue(e, out var count);
+                this.activeCounts[e] = count + 1;
+            }
+
             // Rising edge: clip active this frame, inactive last frame -> restart from the start.
             foreach (var (binding, data, activePrev) in SystemAPI
                          .Query<RefRO<TrackBinding>, RefRO<ParticleClipData>, EnabledRefRO<ClipActivePrevious>>()
@@ -53,6 +91,12 @@ namespace BovineLabs.Timeline.Particles
                 if (!activePrev.ValueRO)
                 {
                     continue; // wasn't active last frame, nothing to stop
+                }
+
+                // Another clip still bound to the same ParticleSystem is active this frame -> don't cut it off.
+                if (this.activeCounts.TryGetValue(binding.ValueRO.Value, out var stillActive) && stillActive > 0)
+                {
+                    continue;
                 }
 
                 if (!this.TryGetParticleSystem(binding.ValueRO.Value, out var ps))
