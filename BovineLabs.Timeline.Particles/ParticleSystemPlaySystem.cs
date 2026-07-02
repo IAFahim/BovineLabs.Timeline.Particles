@@ -25,6 +25,10 @@ namespace BovineLabs.Timeline.Particles
         // Active-clip refcount per bound PS this frame, so a falling edge doesn't stop an effect another clip needs.
         private readonly System.Collections.Generic.Dictionary<Entity, int> activeCounts = new();
 
+        // Clip entities that have successfully Played this activation, so a rising-edge miss (companion not yet
+        // resolved) retries on later active frames instead of silently never playing. Cleared on the falling edge.
+        private readonly System.Collections.Generic.HashSet<Entity> played = new();
+
         /// <inheritdoc/>
         protected override void OnUpdate()
         {
@@ -60,38 +64,49 @@ namespace BovineLabs.Timeline.Particles
                 this.activeCounts[e] = count + 1;
             }
 
-            // Rising edge: clip active this frame, inactive last frame -> restart from the start.
-            foreach (var (binding, data, activePrev) in SystemAPI
+            // Rising edge (and retry): Play from the start once, per activation. If the companion isn't resolved on
+            // the rising edge frame, retry on subsequent active frames until it is, instead of missing the play.
+            foreach (var (binding, data, activePrev, clipEntity) in SystemAPI
                          .Query<RefRO<TrackBinding>, RefRO<ParticleClipData>, EnabledRefRO<ClipActivePrevious>>()
                          .WithAll<ClipActive>()
-                         .WithPresent<ClipActivePrevious>())
+                         .WithPresent<ClipActivePrevious>()
+                         .WithEntityAccess())
             {
-                if (activePrev.ValueRO)
+                if (this.played.Contains(clipEntity))
                 {
-                    continue; // already active last frame, not the start edge
+                    continue; // already played this activation
                 }
 
                 if (!this.TryGetParticleSystem(binding.ValueRO.Value, out var ps))
                 {
-                    Debug.LogWarning($"ParticleSystemClip on entity {binding.ValueRO.Value} did not play: binding is Null or the bound GameObject has no ParticleSystem companion.");
+                    // Warn only on the rising edge so an unresolved-companion retry doesn't spam every frame.
+                    if (!activePrev.ValueRO)
+                    {
+                        Debug.LogWarning($"ParticleSystemClip on entity {binding.ValueRO.Value} did not play yet: binding is Null or the bound GameObject has no ParticleSystem companion (will retry while active).");
+                    }
+
                     continue;
                 }
 
                 var withChildren = data.ValueRO.PlayWithChildren;
                 ps.Clear(withChildren);
                 ps.Play(withChildren);
+                this.played.Add(clipEntity);
             }
 
             // Falling edge: clip inactive this frame, active last frame -> stop.
-            foreach (var (binding, data, activePrev) in SystemAPI
+            foreach (var (binding, data, activePrev, clipEntity) in SystemAPI
                          .Query<RefRO<TrackBinding>, RefRO<ParticleClipData>, EnabledRefRO<ClipActivePrevious>>()
                          .WithDisabled<ClipActive>()
-                         .WithPresent<ClipActivePrevious>())
+                         .WithPresent<ClipActivePrevious>()
+                         .WithEntityAccess())
             {
                 if (!activePrev.ValueRO)
                 {
                     continue; // wasn't active last frame, nothing to stop
                 }
+
+                this.played.Remove(clipEntity); // re-arm so a re-entry plays from the start again
 
                 // Another clip still bound to the same ParticleSystem is active this frame -> don't cut it off.
                 if (this.activeCounts.TryGetValue(binding.ValueRO.Value, out var stillActive) && stillActive > 0)
