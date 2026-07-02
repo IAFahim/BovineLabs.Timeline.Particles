@@ -35,6 +35,7 @@ namespace BovineLabs.Timeline.Particles
 
                 if (!this.TryGetParticleSystem(binding.ValueRO.Value, out var ps))
                 {
+                    Debug.LogWarning($"ParticleSystemClip on entity {binding.ValueRO.Value} did not play: binding is Null or the bound GameObject has no ParticleSystem companion.");
                     continue;
                 }
 

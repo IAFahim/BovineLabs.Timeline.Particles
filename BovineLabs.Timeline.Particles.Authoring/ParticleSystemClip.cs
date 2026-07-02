@@ -23,7 +23,7 @@ namespace BovineLabs.Timeline.Particles.Authoring
         public override double duration => 1;
 
         // Edge-driven restart/stop; no Looping (a baked edge would not re-fire a looped clip).
-        public ClipCaps clipCaps => ClipCaps.Blending;
+        public ClipCaps clipCaps => ClipCaps.None;
 
         /// <inheritdoc/>
         public override void Bake(Entity clipEntity, BakingContext context)
