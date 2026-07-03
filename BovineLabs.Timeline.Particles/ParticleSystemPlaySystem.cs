@@ -1,7 +1,7 @@
 namespace BovineLabs.Timeline.Particles
 {
     using BovineLabs.Timeline.Data;
-    using BovineLabs.Timeline.Particles.Data;
+    using Data;
     using Unity.Entities;
     using UnityEngine;
 
@@ -19,39 +19,31 @@ namespace BovineLabs.Timeline.Particles
     [WorldSystemFilter(WorldSystemFilterFlags.LocalSimulation | WorldSystemFilterFlags.ClientSimulation)]
     public partial class ParticleSystemPlaySystem : SystemBase
     {
-        // Bound PS entities we've already neutralized Play-On-Awake on (once each, after the companion resolves).
         private readonly System.Collections.Generic.HashSet<Entity> initialized = new();
 
-        // Active-clip refcount per bound PS this frame, so a falling edge doesn't stop an effect another clip needs.
         private readonly System.Collections.Generic.Dictionary<Entity, int> activeCounts = new();
 
-        // Clip entities that have successfully Played this activation, so a rising-edge miss (companion not yet
-        // resolved) retries on later active frames instead of silently never playing. Cleared on the falling edge.
         private readonly System.Collections.Generic.HashSet<Entity> played = new();
 
         /// <inheritdoc/>
         protected override void OnUpdate()
         {
-            // Play-On-Awake suppression: a bound ParticleSystem with the default Play On Awake would free-run at
-            // SubScene load outside timeline control. Stop+Clear each newly-seen bound PS once (retry until its
-            // companion resolves), before the rising-edge loop — a clip active this frame still plays below.
             foreach (var binding in SystemAPI.Query<RefRO<TrackBinding>>().WithAll<ParticleClipData>())
             {
                 var e = binding.ValueRO.Value;
-                if (e == Entity.Null || this.initialized.Contains(e))
+                if (e == Entity.Null || initialized.Contains(e))
                 {
                     continue;
                 }
 
-                if (this.TryGetParticleSystem(e, out var ps))
+                if (TryGetParticleSystem(e, out var ps))
                 {
                     ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                    this.initialized.Add(e);
+                    initialized.Add(e);
                 }
             }
 
-            // Refcount active clips per bound PS (a shared PS can be driven by multiple clips/tracks).
-            this.activeCounts.Clear();
+            activeCounts.Clear();
             foreach (var binding in SystemAPI.Query<RefRO<TrackBinding>>().WithAll<ParticleClipData, ClipActive>())
             {
                 var e = binding.ValueRO.Value;
@@ -60,26 +52,23 @@ namespace BovineLabs.Timeline.Particles
                     continue;
                 }
 
-                this.activeCounts.TryGetValue(e, out var count);
-                this.activeCounts[e] = count + 1;
+                activeCounts.TryGetValue(e, out var count);
+                activeCounts[e] = count + 1;
             }
 
-            // Rising edge (and retry): Play from the start once, per activation. If the companion isn't resolved on
-            // the rising edge frame, retry on subsequent active frames until it is, instead of missing the play.
             foreach (var (binding, data, activePrev, clipEntity) in SystemAPI
                          .Query<RefRO<TrackBinding>, RefRO<ParticleClipData>, EnabledRefRO<ClipActivePrevious>>()
                          .WithAll<ClipActive>()
                          .WithPresent<ClipActivePrevious>()
                          .WithEntityAccess())
             {
-                if (this.played.Contains(clipEntity))
+                if (played.Contains(clipEntity))
                 {
-                    continue; // already played this activation
+                    continue;
                 }
 
-                if (!this.TryGetParticleSystem(binding.ValueRO.Value, out var ps))
+                if (!TryGetParticleSystem(binding.ValueRO.Value, out var ps))
                 {
-                    // Warn only on the rising edge so an unresolved-companion retry doesn't spam every frame.
                     if (!activePrev.ValueRO)
                     {
                         Debug.LogWarning($"ParticleSystemClip on entity {binding.ValueRO.Value} did not play yet: binding is Null or the bound GameObject has no ParticleSystem companion (will retry while active).");
@@ -91,10 +80,9 @@ namespace BovineLabs.Timeline.Particles
                 var withChildren = data.ValueRO.PlayWithChildren;
                 ps.Clear(withChildren);
                 ps.Play(withChildren);
-                this.played.Add(clipEntity);
+                played.Add(clipEntity);
             }
 
-            // Falling edge: clip inactive this frame, active last frame -> stop.
             foreach (var (binding, data, activePrev, clipEntity) in SystemAPI
                          .Query<RefRO<TrackBinding>, RefRO<ParticleClipData>, EnabledRefRO<ClipActivePrevious>>()
                          .WithDisabled<ClipActive>()
@@ -103,18 +91,17 @@ namespace BovineLabs.Timeline.Particles
             {
                 if (!activePrev.ValueRO)
                 {
-                    continue; // wasn't active last frame, nothing to stop
+                    continue;
                 }
 
-                this.played.Remove(clipEntity); // re-arm so a re-entry plays from the start again
+                played.Remove(clipEntity);
 
-                // Another clip still bound to the same ParticleSystem is active this frame -> don't cut it off.
-                if (this.activeCounts.TryGetValue(binding.ValueRO.Value, out var stillActive) && stillActive > 0)
+                if (activeCounts.TryGetValue(binding.ValueRO.Value, out var stillActive) && stillActive > 0)
                 {
                     continue;
                 }
 
-                if (!this.TryGetParticleSystem(binding.ValueRO.Value, out var ps))
+                if (!TryGetParticleSystem(binding.ValueRO.Value, out var ps))
                 {
                     continue;
                 }
@@ -132,12 +119,12 @@ namespace BovineLabs.Timeline.Particles
         {
             particleSystem = null;
 
-            if (entity == Entity.Null || !this.EntityManager.HasComponent<ParticleSystem>(entity))
+            if (entity == Entity.Null || !EntityManager.HasComponent<ParticleSystem>(entity))
             {
                 return false;
             }
 
-            particleSystem = this.EntityManager.GetComponentObject<ParticleSystem>(entity);
+            particleSystem = EntityManager.GetComponentObject<ParticleSystem>(entity);
             return particleSystem != null;
         }
     }
